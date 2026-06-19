@@ -1,0 +1,29 @@
+# Runtime state
+settings.json
+logs/
+*.log
+
+# Local launchers
+Start-CodexQuotaFloat.local.cmd
+Start-CodexQuotaFloat.local.ps1
+
+# Python cache and test output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
