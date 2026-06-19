@@ -1,0 +1,22 @@
+# Runtime state
+settings.json
+logs/
+*.log
+
+# Build and publish output
+publish/
+**/bin/
+**/obj/
+*.pdb
+TestResults/
+
+# Visual Studio and editor files
+.vs/
+*.user
+*.suo
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
