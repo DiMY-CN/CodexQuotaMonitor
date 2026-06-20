@@ -27,19 +27,6 @@ public static class Formatting
         return $"{Math.Max(0, span.Minutes)}m";
     }
 
-    public static string TokenPair(int? used, int? limit)
-    {
-        if (!used.HasValue || !limit.HasValue)
-        {
-            return "--";
-        }
-        if (Math.Abs(used.Value) >= 1000 && Math.Abs(limit.Value) >= 1000)
-        {
-            return $"{used.Value / 1000}/{limit.Value / 1000}";
-        }
-        return $"{used.Value}/{limit.Value}";
-    }
-
     public static string CompactError(Exception ex)
     {
         var text = ex.Message.Trim();

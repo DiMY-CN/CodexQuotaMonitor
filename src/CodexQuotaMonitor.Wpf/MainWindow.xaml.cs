@@ -9,45 +9,34 @@ namespace CodexQuotaMonitor.Wpf;
 public partial class MainWindow : Window
 {
     private readonly AppPaths _paths;
-    private readonly CliOptions _options;
     private readonly SimpleLogger _logger;
     private readonly QuotaReader _quotaReader;
-    private readonly ContextReader _contextReader;
     private readonly DispatcherTimer _tickTimer = new();
     private readonly DispatcherTimer _topmostTimer = new();
     private readonly DispatcherTimer _placementTimer = new();
     private readonly MetricGaugeBlock _quota5h;
     private readonly MetricGaugeBlock _quotaWeek;
-    private readonly MetricGaugeBlock _context;
+    private readonly RefreshStatusBlock _refreshStatus;
     private readonly Forms.ContextMenuStrip _menu = new();
     private readonly List<Forms.ToolStripMenuItem> _quotaIntervalItems = new();
-    private readonly List<Forms.ToolStripMenuItem> _contextIntervalItems = new();
     private Forms.NotifyIcon? _notifyIcon;
     private System.Drawing.Icon? _trayIcon;
     private AppSettings _settings;
     private IntPtr _hwnd;
     private QuotaSnapshot? _lastQuota;
-    private ContextSnapshot? _lastContext;
     private string? _quotaLastError;
-    private string? _contextLastError;
     private DateTimeOffset? _quotaLastSuccessAt;
-    private DateTimeOffset? _contextLastSuccessAt;
     private DateTimeOffset _nextQuotaAt;
-    private DateTimeOffset _nextContextAt;
     private bool _quotaInFlight;
-    private bool _contextInFlight;
     private bool _quotaPendingRefresh;
-    private bool _contextPendingRefresh;
     private bool _isExiting;
 
     public MainWindow(AppPaths paths, CliOptions options, AppSettings settings, SimpleLogger logger)
     {
         _paths = paths;
-        _options = options;
         _settings = settings;
         _logger = logger;
         _quotaReader = new QuotaReader(paths.ResolveCodexHome(options.CodexHome), options.CodexExe, logger);
-        _contextReader = new ContextReader(paths.ResolveCodexHome(options.CodexHome), logger);
 
         InitializeComponent();
         Width = _settings.WindowWidth;
@@ -56,9 +45,9 @@ public partial class MainWindow : Window
         RootGrid.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition());
         RootGrid.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition());
         RootGrid.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition());
-        _quota5h = AddBlock("5H", "#111A26", 0);
-        _quotaWeek = AddBlock("WK", "#141F2D", 1);
-        _context = AddBlock("CTX", "#111A26", 2);
+        _quota5h = AddGaugeBlock("5H", "#111A26", 0);
+        _quotaWeek = AddGaugeBlock("WK", "#141F2D", 1);
+        _refreshStatus = AddRefreshBlock("#111A26", 2);
 
         BuildMenu();
         SetupTray();
@@ -66,11 +55,22 @@ public partial class MainWindow : Window
         RefreshNow();
     }
 
-    private MetricGaugeBlock AddBlock(string title, string background, int column)
+    private MetricGaugeBlock AddGaugeBlock(string title, string background, int column)
     {
         var block = new MetricGaugeBlock(title, background, _settings)
         {
-            Margin = new Thickness(column == 0 ? 4 : 1.5, 4, column == 2 ? 4 : 1.5, 4)
+            Margin = new Thickness(column == 0 ? 4 : 1.5, 4, 1.5, 4)
+        };
+        System.Windows.Controls.Grid.SetColumn(block, column);
+        RootGrid.Children.Add(block);
+        return block;
+    }
+
+    private RefreshStatusBlock AddRefreshBlock(string background, int column)
+    {
+        var block = new RefreshStatusBlock(background)
+        {
+            Margin = new Thickness(1.5, 4, 4, 4)
         };
         System.Windows.Controls.Grid.SetColumn(block, column);
         RootGrid.Children.Add(block);
@@ -108,16 +108,6 @@ public partial class MainWindow : Window
             _quotaIntervalItems.Add(item);
         }
         _menu.Items.Add(quotaMenu);
-
-        var contextMenu = new Forms.ToolStripMenuItem("Context interval");
-        foreach (var (label, seconds) in new[] { ("5 sec", 5), ("15 sec", 15), ("30 sec", 30), ("1 min", 60), ("2 min", 120) })
-        {
-            var item = new Forms.ToolStripMenuItem(label) { Tag = seconds, CheckOnClick = false };
-            item.Click += (_, _) => SetContextInterval(seconds);
-            contextMenu.DropDownItems.Add(item);
-            _contextIntervalItems.Add(item);
-        }
-        _menu.Items.Add(contextMenu);
         _menu.Items.Add(new Forms.ToolStripSeparator());
         _menu.Items.Add("Exit", null, (_, _) => RequestExit());
         UpdateMenuChecks();
@@ -218,9 +208,7 @@ public partial class MainWindow : Window
     private void RefreshNow()
     {
         _nextQuotaAt = DateTimeOffset.Now.AddSeconds(_settings.QuotaInterval);
-        _nextContextAt = DateTimeOffset.Now.AddSeconds(_settings.ContextInterval);
         StartQuotaRefresh();
-        StartContextRefresh();
     }
 
     private void Tick()
@@ -230,11 +218,6 @@ public partial class MainWindow : Window
         {
             _nextQuotaAt = now.AddSeconds(_settings.QuotaInterval);
             StartQuotaRefresh();
-        }
-        if (now >= _nextContextAt)
-        {
-            _nextContextAt = now.AddSeconds(_settings.ContextInterval);
-            StartContextRefresh();
         }
         Render();
     }
@@ -248,31 +231,15 @@ public partial class MainWindow : Window
                 _quotaPendingRefresh = true;
             }
             UpdateTitle();
+            RenderRefreshStatus();
             return;
         }
 
         _quotaInFlight = true;
         UpdateTitle();
+        RenderRefreshStatus();
         _ = Task.Run(async () => await _quotaReader.ReadAsync())
             .ContinueWith(task => Dispatcher.Invoke(() => HandleQuotaResult(task)));
-    }
-
-    private void StartContextRefresh(bool pendingIfBusy = true)
-    {
-        if (_contextInFlight)
-        {
-            if (pendingIfBusy)
-            {
-                _contextPendingRefresh = true;
-            }
-            UpdateTitle();
-            return;
-        }
-
-        _contextInFlight = true;
-        UpdateTitle();
-        _ = Task.Run(() => _contextReader.Read())
-            .ContinueWith(task => Dispatcher.Invoke(() => HandleContextResult(task)));
     }
 
     private void HandleQuotaResult(Task<QuotaSnapshot> task)
@@ -305,40 +272,10 @@ public partial class MainWindow : Window
         Render();
     }
 
-    private void HandleContextResult(Task<ContextSnapshot> task)
-    {
-        _contextInFlight = false;
-        var value = task.IsCompletedSuccessfully
-            ? task.Result
-            : new ContextSnapshot(Error: task.Exception?.GetBaseException().Message ?? "context worker failed", UpdatedAt: DateTimeOffset.Now);
-        if (value.Error is not null)
-        {
-            _contextLastError = value.Error;
-            if (_lastContext is null || _lastContext.Error is not null)
-            {
-                _lastContext = value;
-            }
-        }
-        else
-        {
-            _lastContext = value;
-            _contextLastError = null;
-            _contextLastSuccessAt = value.UpdatedAt ?? DateTimeOffset.Now;
-        }
-
-        if (_contextPendingRefresh)
-        {
-            _contextPendingRefresh = false;
-            _nextContextAt = DateTimeOffset.Now.AddSeconds(_settings.ContextInterval);
-            StartContextRefresh(false);
-        }
-        Render();
-    }
-
     private void Render()
     {
         RenderQuota();
-        RenderContext();
+        RenderRefreshStatus();
         UpdateTitle();
     }
 
@@ -363,40 +300,49 @@ public partial class MainWindow : Window
         _quotaWeek.SetMetric(secondary.RemainingPercent, Formatting.Countdown(secondary.ResetsAt), _settings);
     }
 
-    private void RenderContext()
+    private void RenderRefreshStatus()
     {
-        if (_lastContext is null)
+        var now = DateTimeOffset.Now;
+        if (_quotaInFlight)
         {
-            _context.SetMetric(null, "Ctx wait", _settings);
+            _refreshStatus.SetStatus(_quotaLastSuccessAt, now, "SYNC", "#F2BD4D");
             return;
         }
-        if (_lastContext.Error is not null && !_lastContext.RemainingPercent.HasValue)
+        if (_lastQuota is null)
         {
-            _context.SetMetric(null, "unavail", _settings);
+            _refreshStatus.SetStatus(null, now, "WAIT", "#91A0B5");
             return;
         }
-        var detail = Formatting.TokenPair(_lastContext.InputTokens, _lastContext.EffectiveWindow);
-        _context.SetMetric(_lastContext.RemainingPercent, detail, _settings);
+        if (_quotaLastError is not null && _quotaLastSuccessAt.HasValue)
+        {
+            _refreshStatus.SetStatus(_quotaLastSuccessAt, now, "OLD", "#F2BD4D");
+            return;
+        }
+        if (_lastQuota.Error is not null && !_quotaLastSuccessAt.HasValue)
+        {
+            _refreshStatus.SetStatus(null, now, "ERR", "#FF6678");
+            return;
+        }
+        if (IsStale(_quotaLastSuccessAt, _settings.QuotaInterval))
+        {
+            _refreshStatus.SetStatus(_quotaLastSuccessAt, now, "STALE", "#F2BD4D");
+            return;
+        }
+
+        _refreshStatus.SetStatus(_quotaLastSuccessAt, now, "", "#28D989");
     }
 
     private void UpdateTitle()
     {
-        var updates = new[] { _quotaLastSuccessAt, _contextLastSuccessAt }
-            .Where(x => x.HasValue)
-            .Select(x => x!.Value)
-            .ToArray();
-        var stamp = updates.Length > 0 ? updates.Max().ToString("HH:mm") : "--:--";
-        var parts = new List<string> { "CTX latest global" };
+        var stamp = _quotaLastSuccessAt.HasValue ? _quotaLastSuccessAt.Value.ToString("HH:mm") : "--:--";
+        var parts = new List<string>();
         if (_quotaInFlight) parts.Add("quota reading");
-        if (_contextInFlight) parts.Add("ctx reading");
         if (_quotaPendingRefresh) parts.Add("quota pending");
-        if (_contextPendingRefresh) parts.Add("ctx pending");
         if (IsStale(_quotaLastSuccessAt, _settings.QuotaInterval)) parts.Add("quota stale");
-        if (IsStale(_contextLastSuccessAt, _settings.ContextInterval)) parts.Add("ctx stale");
         if (_quotaLastError is not null) parts.Add("quota last error");
-        if (_contextLastError is not null) parts.Add("ctx last error");
+        if (parts.Count == 0) parts.Add("quota ok");
 
-        Title = $"{Constants.WindowTitlePrefix} | updated {stamp} | quota {_settings.QuotaInterval}s | context {_settings.ContextInterval}s | {string.Join(" | ", parts)}";
+        Title = $"{Constants.WindowTitlePrefix} | updated {stamp} | quota {_settings.QuotaInterval}s | {string.Join(" | ", parts)}";
         if (_notifyIcon is not null)
         {
             _notifyIcon.Text = Formatting.Truncate(Title, 120);
@@ -423,25 +369,11 @@ public partial class MainWindow : Window
         UpdateTitle();
     }
 
-    private void SetContextInterval(int seconds)
-    {
-        _settings.ContextInterval = seconds;
-        _settings.Normalize();
-        SettingsStore.Save(_paths.SettingsPath, _settings, _logger);
-        _nextContextAt = DateTimeOffset.Now.AddSeconds(_settings.ContextInterval);
-        UpdateMenuChecks();
-        UpdateTitle();
-    }
-
     private void UpdateMenuChecks()
     {
         foreach (var item in _quotaIntervalItems)
         {
             item.Checked = item.Tag is int seconds && seconds == _settings.QuotaInterval;
-        }
-        foreach (var item in _contextIntervalItems)
-        {
-            item.Checked = item.Tag is int seconds && seconds == _settings.ContextInterval;
         }
     }
 

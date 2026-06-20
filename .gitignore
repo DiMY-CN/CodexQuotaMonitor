@@ -1,5 +1,6 @@
 # Runtime state
 settings.json
+settings.local.json
 logs/
 *.log
 
@@ -8,7 +9,14 @@ publish/
 **/bin/
 **/obj/
 *.pdb
+*.nupkg
+*.zip
 TestResults/
+
+# Local launchers and temporary files
+*.local.cmd
+*.local.ps1
+*.tmp
 
 # Visual Studio and editor files
 .vs/

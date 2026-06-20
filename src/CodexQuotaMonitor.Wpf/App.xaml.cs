@@ -114,10 +114,7 @@ public partial class App : System.Windows.Application
         Console.WriteLine($"log={paths.LogPath}");
         Console.WriteLine($"codex_home={codexHome}");
         Console.WriteLine($"codex_exe={(string.IsNullOrWhiteSpace(codexExe) ? "not found" : codexExe)}");
-        Console.WriteLine($"logs_2.sqlite={File.Exists(Path.Combine(codexHome, "logs_2.sqlite"))}");
-        Console.WriteLine($"models_cache.json={File.Exists(Path.Combine(codexHome, "models_cache.json"))}");
         Console.WriteLine($"quota_interval={settings.QuotaInterval}");
-        Console.WriteLine($"context_interval={settings.ContextInterval}");
         Console.WriteLine($"tray={(!settings.NoTray)}");
 
         if (NativeMethods.TryGetTaskbarRect(out var edge, out var rect))
@@ -144,7 +141,6 @@ public partial class App : System.Windows.Application
         var codexHome = paths.ResolveCodexHome(options.CodexHome);
         var quotaReader = new QuotaReader(codexHome, options.CodexExe, logger);
         var quota = Task.Run(() => quotaReader.ReadAsync()).GetAwaiter().GetResult();
-        var context = new ContextReader(codexHome, logger).Read();
         var payload = new
         {
             quota = new
@@ -156,21 +152,10 @@ public partial class App : System.Windows.Application
                 primary = quota.Primary,
                 secondary = quota.Secondary,
                 quota.RateLimitReachedType
-            },
-            context = new
-            {
-                context.Error,
-                context.Model,
-                context.InputTokens,
-                context.ContextWindow,
-                context.EffectiveWindow,
-                context.RemainingPercent,
-                context.SourceLabel,
-                context.SkippedRows
             }
         };
         Console.WriteLine(JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
-        return quota.Error is null && context.Error is null ? 0 : 2;
+        return quota.Error is null ? 0 : 2;
     }
 
     private static bool ActivateExistingWindow(AppSettings settings)

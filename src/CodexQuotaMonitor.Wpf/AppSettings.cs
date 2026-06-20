@@ -8,9 +8,6 @@ public sealed class AppSettings
     [JsonPropertyName("quota_interval")]
     public int QuotaInterval { get; set; } = Constants.DefaultQuotaIntervalSeconds;
 
-    [JsonPropertyName("context_interval")]
-    public int ContextInterval { get; set; } = Constants.DefaultContextIntervalSeconds;
-
     [JsonPropertyName("no_tray")]
     public bool NoTray { get; set; }
 
@@ -26,7 +23,6 @@ public sealed class AppSettings
     public AppSettings Clone() => new()
     {
         QuotaInterval = QuotaInterval,
-        ContextInterval = ContextInterval,
         NoTray = NoTray,
         WindowWidth = WindowWidth,
         RedThreshold = RedThreshold,
@@ -36,7 +32,6 @@ public sealed class AppSettings
     public void Normalize()
     {
         QuotaInterval = Math.Max(30, QuotaInterval);
-        ContextInterval = Math.Max(3, ContextInterval);
         WindowWidth = Math.Clamp(WindowWidth, 210, 520);
         RedThreshold = Math.Clamp(RedThreshold, 0.0, 100.0);
         AmberThreshold = Math.Clamp(AmberThreshold, RedThreshold, 100.0);
@@ -96,10 +91,6 @@ public static class SettingsStore
         if (options.QuotaInterval.HasValue)
         {
             merged.QuotaInterval = options.QuotaInterval.Value;
-        }
-        if (options.ContextInterval.HasValue)
-        {
-            merged.ContextInterval = options.ContextInterval.Value;
         }
         if (options.NoTray.HasValue)
         {

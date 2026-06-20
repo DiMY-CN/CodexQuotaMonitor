@@ -7,7 +7,6 @@ public sealed class CliOptions
     public string? CodexHome { get; private set; }
     public string? CodexExe { get; private set; }
     public int? QuotaInterval { get; private set; }
-    public int? ContextInterval { get; private set; }
     public bool? NoTray { get; private set; }
 
     public static CliOptions Parse(string[] args)
@@ -38,9 +37,6 @@ public sealed class CliOptions
                     break;
                 case "--quota-interval":
                     options.QuotaInterval = int.Parse(TakeValue(args, ref index, arg));
-                    break;
-                case "--context-interval":
-                    options.ContextInterval = int.Parse(TakeValue(args, ref index, arg));
                     break;
                 default:
                     throw new ArgumentException($"Unknown argument: {arg}");

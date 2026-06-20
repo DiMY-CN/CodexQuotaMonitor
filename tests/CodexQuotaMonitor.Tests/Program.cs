@@ -4,7 +4,6 @@ using CodexQuotaMonitor.Wpf;
 var tests = new (string Name, Action Body)[]
 {
     ("quota JSON-RPC response parsing", TestQuotaParsing),
-    ("context malformed row skip and valid row parse", TestContextParsing),
     ("settings defaults, JSON load, CLI override, corrupt fallback", TestSettings),
     ("formatting helpers", TestFormatting),
     ("taskbar placement", TestTaskbarPlacement),
@@ -59,31 +58,6 @@ static void TestQuotaParsing()
     Near(79.0, snapshot.Secondary!.RemainingPercent!.Value, 0.001, "secondary remaining");
 }
 
-static void TestContextParsing()
-{
-    var windows = new Dictionary<string, ModelWindow>
-    {
-        ["gpt-5"] = new(200000, 50)
-    };
-
-    var malformed = ContextReader.TryParseContextRow(
-        "event.kind=response.completed model=gpt-5 input_token_count=oops",
-        windows);
-    Equal(null, malformed, "malformed row");
-
-    var valid = ContextReader.TryParseContextRow(
-        "event.kind=response.completed event.timestamp=\"2026-06-19T12:00:00Z\" conversation.id=abc model=gpt-5 input_token_count=25000 cached_token_count=1000 output_token_count=10",
-        windows,
-        skippedRows: 1);
-    True(valid is not null, "valid context row");
-    Equal("gpt-5", valid!.Model, "model");
-    Equal(25000, valid.InputTokens, "input tokens");
-    Equal(100000, valid.EffectiveWindow, "effective window");
-    Near(75.0, valid.RemainingPercent!.Value, 0.001, "remaining context");
-    Equal("latest global", valid.SourceLabel, "source label");
-    Equal(1, valid.SkippedRows, "skipped rows");
-}
-
 static void TestSettings()
 {
     var tempDir = Path.Combine(Path.GetTempPath(), "codex-quota-native-tests", Guid.NewGuid().ToString("N"));
@@ -93,12 +67,10 @@ static void TestSettings()
     {
         var defaults = SettingsStore.Load(path);
         Equal(180, defaults.QuotaInterval, "default quota interval");
-        Equal(15, defaults.ContextInterval, "default context interval");
 
         File.WriteAllText(path, """
             {
               "quota_interval": 60,
-              "context_interval": 30,
               "no_tray": true,
               "window_width": 320,
               "red_threshold": 10,
@@ -126,9 +98,10 @@ static void TestSettings()
 
 static void TestFormatting()
 {
-    Equal("129/258", Formatting.TokenPair(129000, 258400), "token pair");
     Equal("abc", Formatting.Truncate("abc", 10), "truncate short");
     Equal("abcdefg...", Formatting.Truncate("abcdefghijk", 10), "truncate long");
+    Equal("--", Formatting.RemainingText(null), "remaining missing");
+    Equal("43", Formatting.RemainingText(42.75), "remaining percent");
 }
 
 static void TestTaskbarPlacement()
@@ -151,18 +124,16 @@ static void TestArguments()
 {
     var options = CliOptions.Parse([
         "--check",
-        "--codex-home", "C:\\Users\\example\\.codex",
+        "--codex-home", "C:\\CodexHome\\.codex",
         "--codex-exe", "C:\\Tools\\codex.exe",
         "--quota-interval", "600",
-        "--context-interval", "20",
         "--no-tray"
     ]);
     Equal(true, options.Check, "check flag");
     Equal(false, options.Once, "once flag");
-    Equal("C:\\Users\\example\\.codex", options.CodexHome, "codex home");
+    Equal("C:\\CodexHome\\.codex", options.CodexHome, "codex home");
     Equal("C:\\Tools\\codex.exe", options.CodexExe, "codex exe");
     Equal(600, options.QuotaInterval, "quota interval");
-    Equal(20, options.ContextInterval, "context interval");
     Equal(true, options.NoTray, "no tray");
 
     var tray = CliOptions.Parse(["--tray"]);
@@ -174,14 +145,6 @@ static void Equal<T>(T expected, T actual, string label)
     if (!EqualityComparer<T>.Default.Equals(expected, actual))
     {
         throw new InvalidOperationException($"{label}: expected {expected}, got {actual}");
-    }
-}
-
-static void True(bool value, string label)
-{
-    if (!value)
-    {
-        throw new InvalidOperationException($"{label}: expected true");
     }
 }
 
