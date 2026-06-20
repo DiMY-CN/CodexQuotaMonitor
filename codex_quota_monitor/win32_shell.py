@@ -302,7 +302,7 @@ class Win32TrayIcon:
     IDI_APPLICATION = 32512
     WM_LBUTTONUP = 0x0202
     WM_RBUTTONUP = 0x0205
-    WM_CONTEXTMENU = 0x007B
+    WM_RIGHT_MENU = 0x007B
     GWLP_WNDPROC = -4
 
     def __init__(
@@ -410,7 +410,7 @@ class Win32TrayIcon:
             if event == self.WM_LBUTTONUP:
                 self.root.after(0, self.on_left_click)
                 return 0
-            if event in (self.WM_RBUTTONUP, self.WM_CONTEXTMENU):
+            if event in (self.WM_RBUTTONUP, self.WM_RIGHT_MENU):
                 x, y = get_cursor_position()
                 self.root.after(0, lambda: self.on_right_click(x, y))
                 return 0

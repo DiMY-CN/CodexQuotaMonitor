@@ -4,19 +4,16 @@ import json
 import logging
 import os
 import queue
-import re
-import sqlite3
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
 
-from .constants import CONTEXT_ROW_LOOKBACK
-from .models import ContextSnapshot, LimitWindow, QuotaSnapshot
+from .models import LimitWindow, QuotaSnapshot
 from .utils import compact_error, find_codex_exe, now_local
 
 LOGGER = logging.getLogger("codex_quota_monitor")
+
 
 class CodexRpcError(RuntimeError):
     pass
@@ -155,150 +152,3 @@ class CodexQuotaReader:
             window_mins=raw.get("windowDurationMins") if isinstance(raw.get("windowDurationMins"), int) else None,
             resets_at=raw.get("resetsAt") if isinstance(raw.get("resetsAt"), int) else None,
         )
-
-
-class ContextReader:
-    KEY_PATTERN = re.compile(r'([A-Za-z0-9_.-]+)=(".*?"|\S+)')
-    SOURCE_LABEL = "latest global"
-
-    def __init__(self, codex_home: Path) -> None:
-        self.codex_home = codex_home
-
-    def read(self) -> ContextSnapshot:
-        try:
-            model_windows = self._load_model_windows()
-            rows = self._recent_completed_rows()
-            if not rows:
-                return ContextSnapshot(
-                    error="no response.completed usage row found",
-                    source_label=self.SOURCE_LABEL,
-                    updated_at=now_local(),
-                )
-
-            skipped_rows = 0
-            for row in rows:
-                snapshot = self._snapshot_from_row(row, model_windows, skipped_rows)
-                if snapshot:
-                    return snapshot
-                skipped_rows += 1
-
-            return ContextSnapshot(
-                error=f"no valid response.completed usage row found in latest {len(rows)} rows",
-                source_label=self.SOURCE_LABEL,
-                skipped_rows=skipped_rows,
-                updated_at=now_local(),
-            )
-        except Exception as exc:
-            return ContextSnapshot(error=compact_error(exc), source_label=self.SOURCE_LABEL, updated_at=now_local())
-
-    def _latest_completed_row(self) -> str | None:
-        rows = self._recent_completed_rows(limit=1)
-        return rows[0] if rows else None
-
-    def _recent_completed_rows(self, limit: int = CONTEXT_ROW_LOOKBACK) -> list[str]:
-        path = self.codex_home / "logs_2.sqlite"
-        if not path.exists():
-            raise FileNotFoundError(path)
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
-        try:
-            cur = con.cursor()
-            cur.execute("PRAGMA busy_timeout=1500")
-            columns = {row[1] for row in cur.execute("PRAGMA table_info(logs)")}
-            if "feedback_log_body" not in columns:
-                raise RuntimeError("logs.feedback_log_body column not found")
-            rows = cur.execute(
-                """
-                SELECT feedback_log_body
-                FROM logs
-                WHERE feedback_log_body LIKE '%event.kind=response.completed%'
-                  AND feedback_log_body LIKE '%input_token_count=%'
-                ORDER BY ts DESC, id DESC
-                LIMIT ?
-                """,
-                (max(1, int(limit)),),
-            ).fetchall()
-            return [str(row[0]) for row in rows if row and row[0]]
-        finally:
-            con.close()
-
-    def _snapshot_from_row(
-        self,
-        row: str,
-        model_windows: dict[str, dict[str, float | int]],
-        skipped_rows: int,
-    ) -> ContextSnapshot | None:
-        metadata = self._parse_key_values(row)
-        model = metadata.get("model") or metadata.get("slug")
-        if not model:
-            return None
-
-        input_tokens = self._to_int(metadata.get("input_token_count"))
-        if input_tokens is None or input_tokens < 0:
-            return None
-
-        model_window = model_windows.get(model, {})
-        context_window = int(model_window.get("context_window") or 0)
-        if context_window <= 0:
-            context_window = 272000
-        effective_percent = float(model_window.get("effective_context_window_percent") or 0)
-        if effective_percent > 0:
-            effective_window = int(context_window * effective_percent / 100)
-        else:
-            effective_window = context_window
-        if effective_window <= 0:
-            return None
-
-        used_percent = min(100.0, max(0.0, input_tokens * 100.0 / effective_window))
-        remaining_percent = max(0.0, 100.0 - used_percent)
-        return ContextSnapshot(
-            model=model,
-            input_tokens=input_tokens,
-            cached_tokens=self._to_int(metadata.get("cached_token_count")),
-            output_tokens=self._to_int(metadata.get("output_token_count")),
-            reasoning_tokens=self._to_int(metadata.get("reasoning_token_count")),
-            context_window=context_window,
-            effective_window=effective_window,
-            used_percent=used_percent,
-            remaining_percent=remaining_percent,
-            event_time=metadata.get("event.timestamp"),
-            conversation_id=metadata.get("conversation.id"),
-            source_label=self.SOURCE_LABEL,
-            skipped_rows=skipped_rows,
-            updated_at=now_local(),
-        )
-
-    def _load_model_windows(self) -> dict[str, dict[str, float | int]]:
-        path = self.codex_home / "models_cache.json"
-        if not path.exists():
-            return {}
-        data = json.loads(path.read_text(encoding="utf-8"))
-        result: dict[str, dict[str, float | int]] = {}
-        for model in data.get("models", []):
-            if not isinstance(model, dict):
-                continue
-            slug = model.get("slug")
-            if not slug:
-                continue
-            result[str(slug)] = {
-                "context_window": int(model.get("context_window") or 0),
-                "effective_context_window_percent": float(model.get("effective_context_window_percent") or 0),
-            }
-        return result
-
-    @classmethod
-    def _parse_key_values(cls, text: str) -> dict[str, str]:
-        values: dict[str, str] = {}
-        for key, value in cls.KEY_PATTERN.findall(text):
-            if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
-                value = value[1:-1]
-            values[key] = value
-        return values
-
-    @staticmethod
-    def _to_int(value: str | None) -> int | None:
-        if value is None:
-            return None
-        try:
-            return int(value)
-        except ValueError:
-            return None

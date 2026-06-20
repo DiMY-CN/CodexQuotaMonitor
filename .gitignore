@@ -1,11 +1,14 @@
 # Runtime state
 settings.json
+settings.local.json
 logs/
 *.log
 
 # Local launchers
 Start-CodexQuotaFloat.local.cmd
 Start-CodexQuotaFloat.local.ps1
+*.local.cmd
+*.local.ps1
 
 # Python cache and test output
 __pycache__/
@@ -16,6 +19,11 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Build and packaging output
+build/
+dist/
+*.spec
 
 # Local environments
 .venv/

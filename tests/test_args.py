@@ -1,6 +1,6 @@
 import io
 import unittest
-from contextlib import redirect_stderr
+import sys
 
 from codex_quota_monitor.__main__ import parse_args
 
@@ -14,18 +14,21 @@ class ArgumentTests(unittest.TestCase):
     def test_interval_defaults_do_not_override_settings(self):
         args = parse_args([])
         self.assertIsNone(args.quota_interval)
-        self.assertIsNone(args.context_interval)
 
     def test_silence_flag(self):
         self.assertTrue(parse_args(["--silence"]).silence)
         self.assertTrue(parse_args(["--silent"]).silence)
 
     def test_silence_does_not_mix_with_console_modes(self):
-        with redirect_stderr(io.StringIO()):
+        original_stderr = sys.stderr
+        sys.stderr = io.StringIO()
+        try:
             with self.assertRaises(SystemExit):
                 parse_args(["--silence", "--check"])
             with self.assertRaises(SystemExit):
                 parse_args(["--silence", "--once"])
+        finally:
+            sys.stderr = original_stderr
 
 
 if __name__ == "__main__":

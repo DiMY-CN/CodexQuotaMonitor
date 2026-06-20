@@ -14,11 +14,11 @@ from pathlib import Path
 from tkinter import ttk
 
 from .constants import APP_NAME, DEFAULT_HEIGHT, PLACEMENT_REASSERT_MS, TOPMOST_REASSERT_MS
-from .models import ContextSnapshot, LimitWindow, QuotaSnapshot
-from .readers import CodexQuotaReader, ContextReader
+from .models import LimitWindow, QuotaSnapshot
+from .readers import CodexQuotaReader
 from .settings import AppSettings, save_settings
-from .utils import clamp, compact_error, compact_token_pair, find_codex_exe, format_countdown, now_local
-from .widgets import COLORS, CompactMetricBlock, set_color_thresholds
+from .utils import clamp, compact_error, find_codex_exe, format_countdown, now_local, truncate_text
+from .widgets import COLORS, CompactMetricBlock, CompactStatusBlock, set_color_thresholds
 from .win32_shell import (
     Win32TrayIcon,
     apply_overlay_window_styles,
@@ -38,7 +38,6 @@ class FloatingApp:
         set_color_thresholds(settings.red_threshold, settings.amber_threshold)
         self.codex_home = Path(args.codex_home).expanduser()
         self.quota_reader = CodexQuotaReader(self.codex_home, Path(args.codex_exe) if args.codex_exe else None)
-        self.context_reader = ContextReader(self.codex_home)
         self.root = tk.Tk()
         self.root.report_callback_exception = self._report_callback_exception
         self.root.title(APP_NAME)
@@ -50,22 +49,14 @@ class FloatingApp:
 
         self._drag_start: tuple[int, int] | None = None
         self._last_quota: QuotaSnapshot | None = None
-        self._last_context: ContextSnapshot | None = None
         self._quota_last_error: str | None = None
-        self._context_last_error: str | None = None
         self._quota_last_success_at: dt.datetime | None = None
-        self._context_last_success_at: dt.datetime | None = None
         self._quota_in_flight = False
-        self._context_in_flight = False
         self._quota_pending_refresh = False
-        self._context_pending_refresh = False
         self._next_quota_at = 0.0
-        self._next_context_at = 0.0
         self._worker_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self.quota_interval = int(settings.quota_interval)
-        self.context_interval = int(settings.context_interval)
         self.quota_interval_var = tk.IntVar(value=self.quota_interval)
-        self.context_interval_var = tk.IntVar(value=self.context_interval)
         self.tray_icon: Win32TrayIcon | None = None
         self.tray_available = False
 
@@ -110,8 +101,8 @@ class FloatingApp:
         self.row_5h.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
         self.row_week = CompactMetricBlock(content, "WK", COLORS["row_alt"])
         self.row_week.grid(row=0, column=1, sticky="nsew", padx=(0, 3))
-        self.row_ctx = CompactMetricBlock(content, "CTX", COLORS["row"])
-        self.row_ctx.grid(row=0, column=2, sticky="nsew")
+        self.row_refresh = CompactStatusBlock(content, "REF", COLORS["row"])
+        self.row_refresh.grid(row=0, column=2, sticky="nsew")
 
         self.menu = tk.Menu(self.root, tearoff=False)
         self.menu.add_command(label="Refresh now", command=self.refresh_now)
@@ -132,15 +123,6 @@ class FloatingApp:
             )
         self.menu.add_cascade(label="Quota interval", menu=quota_menu)
 
-        context_menu = tk.Menu(self.menu, tearoff=False)
-        for label, seconds in (("5 sec", 5), ("15 sec", 15), ("30 sec", 30), ("1 min", 60), ("2 min", 120)):
-            context_menu.add_radiobutton(
-                label=label,
-                value=seconds,
-                variable=self.context_interval_var,
-                command=lambda value=seconds: self.set_context_interval(value),
-            )
-        self.menu.add_cascade(label="Context interval", menu=context_menu)
         self.menu.add_separator()
         self.menu.add_command(label="Exit", command=self.exit_app)
 
@@ -278,9 +260,7 @@ class FloatingApp:
 
     def refresh_now(self) -> None:
         self._next_quota_at = time.monotonic() + self.quota_interval
-        self._next_context_at = time.monotonic() + self.context_interval
         self._start_quota_refresh()
-        self._start_context_refresh()
 
     def _start_quota_refresh(self, pending_if_busy: bool = True) -> bool:
         if self._quota_in_flight:
@@ -293,17 +273,6 @@ class FloatingApp:
         threading.Thread(target=self._quota_worker, daemon=True).start()
         return True
 
-    def _start_context_refresh(self, pending_if_busy: bool = True) -> bool:
-        if self._context_in_flight:
-            if pending_if_busy:
-                self._context_pending_refresh = True
-            self._update_title()
-            return False
-        self._context_in_flight = True
-        self._update_title()
-        threading.Thread(target=self._context_worker, daemon=True).start()
-        return True
-
     def set_quota_interval(self, seconds: int) -> None:
         self.quota_interval = int(seconds)
         self.quota_interval_var.set(self.quota_interval)
@@ -311,16 +280,8 @@ class FloatingApp:
         self._save_settings()
         self._update_title()
 
-    def set_context_interval(self, seconds: int) -> None:
-        self.context_interval = int(seconds)
-        self.context_interval_var.set(self.context_interval)
-        self._next_context_at = time.monotonic() + self.context_interval
-        self._save_settings()
-        self._update_title()
-
     def _save_settings(self) -> None:
         self.settings.quota_interval = int(self.quota_interval)
-        self.settings.context_interval = int(self.context_interval)
         save_settings(self.settings, logger=LOGGER)
 
     def _quota_worker(self) -> None:
@@ -329,13 +290,6 @@ class FloatingApp:
         except Exception as exc:
             result = QuotaSnapshot(error=compact_error(exc), updated_at=now_local())
         self._worker_queue.put(("quota", result))
-
-    def _context_worker(self) -> None:
-        try:
-            result = self.context_reader.read()
-        except Exception as exc:
-            result = ContextSnapshot(error=compact_error(exc), source_label=ContextReader.SOURCE_LABEL, updated_at=now_local())
-        self._worker_queue.put(("context", result))
 
     def _handle_quota_result(self, value: object) -> None:
         self._quota_in_flight = False
@@ -358,31 +312,6 @@ class FloatingApp:
             self._next_quota_at = time.monotonic() + self.quota_interval
             self._start_quota_refresh(pending_if_busy=False)
 
-    def _handle_context_result(self, value: object) -> None:
-        self._context_in_flight = False
-        if isinstance(value, ContextSnapshot):
-            if value.error:
-                self._context_last_error = value.error
-                if self._last_context is None or self._last_context.error:
-                    self._last_context = value
-            else:
-                self._last_context = value
-                self._context_last_error = None
-                self._context_last_success_at = value.updated_at or now_local()
-        else:
-            self._context_last_error = "invalid context worker result"
-            if self._last_context is None:
-                self._last_context = ContextSnapshot(
-                    error=self._context_last_error,
-                    source_label=ContextReader.SOURCE_LABEL,
-                    updated_at=now_local(),
-                )
-
-        if self._context_pending_refresh:
-            self._context_pending_refresh = False
-            self._next_context_at = time.monotonic() + self.context_interval
-            self._start_context_refresh(pending_if_busy=False)
-
     def _tick(self) -> None:
         while True:
             try:
@@ -391,36 +320,22 @@ class FloatingApp:
                 break
             if kind == "quota":
                 self._handle_quota_result(value)
-            if kind == "context":
-                self._handle_context_result(value)
             self._render()
 
         mono = time.monotonic()
         if mono >= self._next_quota_at:
             self._next_quota_at = mono + self.quota_interval
             self._start_quota_refresh()
-        if mono >= self._next_context_at:
-            self._next_context_at = mono + self.context_interval
-            self._start_context_refresh()
         self._render_countdowns()
         self.root.after(1000, self._tick)
 
     def _render(self) -> None:
         self._render_quota()
-        self._render_context()
+        self._render_refresh_status()
         self._update_title()
 
     def _latest_display_update(self) -> dt.datetime | None:
-        updated_parts: list[dt.datetime] = []
-        if self._quota_last_success_at:
-            updated_parts.append(self._quota_last_success_at)
-        elif self._last_quota and self._last_quota.updated_at:
-            updated_parts.append(self._last_quota.updated_at)
-        if self._context_last_success_at:
-            updated_parts.append(self._context_last_success_at)
-        elif self._last_context and self._last_context.updated_at:
-            updated_parts.append(self._last_context.updated_at)
-        return max(updated_parts) if updated_parts else None
+        return self._quota_success_stamp()
 
     def _is_stale_time(self, updated_at: dt.datetime | None, interval_seconds: int) -> bool:
         if updated_at is None:
@@ -434,39 +349,21 @@ class FloatingApp:
             updated_at = self._last_quota.updated_at
         return self._is_stale_time(updated_at, self.quota_interval)
 
-    def _is_context_stale(self) -> bool:
-        updated_at = self._context_last_success_at
-        if updated_at is None and self._last_context and not self._last_context.error:
-            updated_at = self._last_context.updated_at
-        return self._is_stale_time(updated_at, self.context_interval)
-
     def _status_parts(self, include_error_details: bool = False) -> list[str]:
-        context_source = ContextReader.SOURCE_LABEL
-        if self._last_context and self._last_context.source_label:
-            context_source = self._last_context.source_label
-        parts = [f"CTX {context_source}"]
+        parts: list[str] = []
         if self._quota_in_flight:
             parts.append("quota reading")
-        if self._context_in_flight:
-            parts.append("ctx reading")
         if self._quota_pending_refresh:
             parts.append("quota pending")
-        if self._context_pending_refresh:
-            parts.append("ctx pending")
         if self._is_quota_stale():
             parts.append("quota stale")
-        if self._is_context_stale():
-            parts.append("ctx stale")
         if self._quota_last_error:
             if include_error_details:
                 parts.append(f"quota error: {truncate_text(self._quota_last_error, 36)}")
             else:
                 parts.append("quota last error")
-        if self._context_last_error:
-            if include_error_details:
-                parts.append(f"ctx error: {truncate_text(self._context_last_error, 36)}")
-            else:
-                parts.append("ctx last error")
+        if not parts:
+            parts.append("quota ok")
         return parts
 
     def _update_title(self, updated_at: dt.datetime | None = None) -> None:
@@ -477,9 +374,7 @@ class FloatingApp:
         else:
             stamp = "--:--"
         status = " | ".join(self._status_parts())
-        self.root.title(
-            f"{APP_NAME} | updated {stamp} | quota {self.quota_interval}s | context {self.context_interval}s | {status}"
-        )
+        self.root.title(f"{APP_NAME} | updated {stamp} | quota {self.quota_interval}s | {status}")
         if self.tray_icon:
             tooltip_status = " | ".join(self._status_parts(include_error_details=True))
             self.tray_icon.set_tooltip(f"{APP_NAME} | updated {stamp} | {tooltip_status}")
@@ -487,6 +382,7 @@ class FloatingApp:
     def _render_countdowns(self) -> None:
         if self._last_quota and not self._last_quota.error:
             self._render_quota()
+        self._render_refresh_status()
         self._update_title()
 
     def _render_quota(self) -> None:
@@ -510,18 +406,40 @@ class FloatingApp:
             format_countdown(secondary.resets_at),
         )
 
-    def _render_context(self) -> None:
-        context = self._last_context
-        if not context:
-            self.row_ctx.set_metric(None, "Context waiting")
+    def _quota_success_stamp(self) -> dt.datetime | None:
+        if self._quota_last_success_at:
+            return self._quota_last_success_at
+        if self._last_quota and not self._last_quota.error:
+            return self._last_quota.updated_at
+        return None
+
+    def _format_panel_time(self, value: dt.datetime | None) -> str:
+        if value is None:
+            return "--:--"
+        return value.strftime("%H:%M")
+
+    def _format_refresh_pair(self, refreshed_at: dt.datetime | None) -> str:
+        return f"{self._format_panel_time(refreshed_at)}/{now_local().strftime('%H:%M')}"
+
+    def _render_refresh_status(self) -> None:
+        stamp = self._quota_success_stamp()
+        pair = self._format_refresh_pair(stamp)
+        if self._quota_in_flight:
+            self.row_refresh.set_status(pair, "SYNC", COLORS["amber"])
             return
-        if context.error:
-            self.row_ctx.set_metric(None, "Context unavailable")
+        if self._last_quota is None:
+            self.row_refresh.set_status(pair, "WAIT", COLORS["muted"])
             return
-        detail = "Context waiting"
-        if context.input_tokens is not None and context.effective_window:
-            detail = compact_token_pair(context.input_tokens, context.effective_window)
-        self.row_ctx.set_metric(context.remaining_percent, detail)
+        if self._quota_last_error and stamp is not None:
+            self.row_refresh.set_status(pair, "OLD", COLORS["amber"])
+            return
+        if self._last_quota.error and stamp is None:
+            self.row_refresh.set_status(pair, "ERR", COLORS["red"])
+            return
+        if self._is_quota_stale():
+            self.row_refresh.set_status(pair, "STALE", COLORS["amber"])
+            return
+        self.row_refresh.set_status(pair, "", COLORS["green"])
 
     def run(self) -> None:
         try:
@@ -542,36 +460,23 @@ class FloatingApp:
 def check_environment(args: argparse.Namespace, settings: AppSettings) -> int:
     codex_home = Path(args.codex_home).expanduser()
     codex_exe = Path(args.codex_exe) if args.codex_exe else find_codex_exe()
-    context = ContextReader(codex_home).read()
     taskbar = get_taskbar_rect()
     print(f"codex_home={codex_home}")
     print(f"codex_exe={codex_exe if codex_exe else 'NOT_FOUND'}")
-    print(f"logs_2.sqlite={(codex_home / 'logs_2.sqlite').exists()}")
-    print(f"models_cache.json={(codex_home / 'models_cache.json').exists()}")
+    print(f"quota_interval={settings.quota_interval}")
     print(f"tray={'disabled' if settings.no_tray else 'enabled'}")
-    if context.error:
-        print(f"context_error={context.error}")
-    else:
-        remaining = f"{context.remaining_percent:.1f}%" if context.remaining_percent is not None else "unknown"
-        print(
-            "context="
-            f"model={context.model} input={context.input_tokens} "
-            f"effective_window={context.effective_window} remaining={remaining} "
-            f"source={context.source_label or ContextReader.SOURCE_LABEL} skipped_rows={context.skipped_rows}"
-        )
     if taskbar:
         edge, rect = taskbar
         print(f"taskbar=edge:{edge} rect:{rect.left},{rect.top},{rect.right},{rect.bottom}")
     else:
         print("taskbar=unavailable")
-    return 0 if codex_exe and not context.error else 2
+    return 0 if codex_exe else 2
 
 
 def print_snapshot_once(args: argparse.Namespace) -> int:
     codex_home = Path(args.codex_home).expanduser()
     codex_exe = Path(args.codex_exe) if args.codex_exe else find_codex_exe()
     quota = CodexQuotaReader(codex_home, codex_exe).read()
-    context = ContextReader(codex_home).read()
     payload = {
         "quota": {
             "error": quota.error,
@@ -581,18 +486,8 @@ def print_snapshot_once(args: argparse.Namespace) -> int:
             "primary_resets_at": quota.primary.resets_at if quota.primary else None,
             "secondary_remaining_percent": quota.secondary.remaining_percent if quota.secondary else None,
             "secondary_resets_at": quota.secondary.resets_at if quota.secondary else None,
-        },
-        "context": {
-            "error": context.error,
-            "model": context.model,
-            "input_tokens": context.input_tokens,
-            "effective_window": context.effective_window,
-            "remaining_percent": context.remaining_percent,
-            "event_time": context.event_time,
-            "conversation_id": context.conversation_id,
-            "source_label": context.source_label,
-            "skipped_rows": context.skipped_rows,
-        },
+            "updated_at": quota.updated_at.isoformat() if quota.updated_at else None,
+        }
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    return 0 if not quota.error and not context.error else 2
+    return 0 if not quota.error else 2

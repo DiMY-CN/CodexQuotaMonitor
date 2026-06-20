@@ -22,13 +22,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--codex-home", default=str(default_codex_home()), help="Codex home directory, default: %%USERPROFILE%%\.codex")
     parser.add_argument("--codex-exe", default="", help="Optional explicit path to codex.exe")
     parser.add_argument("--quota-interval", type=int, default=None, help="Quota refresh interval in seconds")
-    parser.add_argument("--context-interval", type=int, default=None, help="Context log refresh interval in seconds")
     tray_group = parser.add_mutually_exclusive_group()
     tray_group.add_argument("--no-tray", dest="no_tray", action="store_true", help="Disable the Win32 notification-area icon")
     tray_group.add_argument("--tray", dest="no_tray", action="store_false", help="Enable the Win32 notification-area icon")
     parser.set_defaults(no_tray=None)
-    parser.add_argument("--check", action="store_true", help="Check paths and local context parsing without opening the GUI")
-    parser.add_argument("--once", action="store_true", help="Print one quota/context snapshot and exit")
+    parser.add_argument("--check", action="store_true", help="Check paths without opening the GUI")
+    parser.add_argument("--once", action="store_true", help="Print one quota snapshot and exit")
     parser.add_argument(
         "--silence",
         "--silent",
@@ -110,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     base_settings = load_settings(logger=logger)
     settings = apply_cli_overrides(base_settings, args)
-    logger.info("starting %s check=%s once=%s no_tray=%s quota_interval=%s context_interval=%s", APP_NAME, args.check, args.once, settings.no_tray, settings.quota_interval, settings.context_interval)
+    logger.info("starting %s check=%s once=%s no_tray=%s quota_interval=%s", APP_NAME, args.check, args.once, settings.no_tray, settings.quota_interval)
     if args.check:
         return check_environment(args, settings)
     if args.once:

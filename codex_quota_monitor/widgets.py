@@ -191,6 +191,93 @@ class CompactMetricBlock(tk.Frame):
         )
 
 
+class CompactStatusBlock(tk.Frame):
+    def __init__(self, master: tk.Widget, title: str, bg: str) -> None:
+        super().__init__(
+            master,
+            bg=bg,
+            width=82,
+            highlightthickness=1,
+            highlightbackground=COLORS["border"],
+            highlightcolor=COLORS["border"],
+        )
+        self.pack_propagate(False)
+        self.title = title
+        self.bg = bg
+        self.canvas = tk.Canvas(
+            self,
+            highlightthickness=0,
+            bg=bg,
+            bd=0,
+            relief="flat",
+        )
+        self.canvas.pack(fill="both", expand=True)
+        self.refresh_text = "--:--"
+        self.current_text = "--:--"
+        self.detail_text = "WAIT"
+        self.accent = COLORS["muted"]
+        self.bind("<Configure>", lambda _event: self._draw())
+        self.canvas.bind("<Configure>", lambda _event: self._draw())
+
+    def set_status(self, main: str, detail: str, accent: str | None = None) -> None:
+        left, sep, right = main.partition("/")
+        self.refresh_text = truncate_text(left or "--:--", 5)
+        self.current_text = truncate_text(right if sep else "--:--", 5)
+        self.detail_text = truncate_text(detail, 6)
+        self.accent = accent or COLORS["text"]
+        self._draw()
+
+    def _draw(self) -> None:
+        width = max(50, self.canvas.winfo_width())
+        height = max(34, self.canvas.winfo_height())
+        self.canvas.delete("all")
+        self.canvas.create_text(
+            6,
+            3,
+            text=self.title,
+            fill=COLORS["soft"],
+            font=("Segoe UI", 7, "bold"),
+            anchor="nw",
+        )
+
+        center_x = width / 2
+        time_y = min(max(17, height / 2 + 1), height - 15)
+        self.canvas.create_text(
+            center_x - 4,
+            time_y,
+            text=self.refresh_text,
+            fill=self.accent,
+            font=("Segoe UI", 8, "bold"),
+            anchor="e",
+        )
+        self.canvas.create_text(
+            center_x,
+            time_y,
+            text="/",
+            fill=COLORS["muted"],
+            font=("Segoe UI", 8, "bold"),
+            anchor="center",
+        )
+        self.canvas.create_text(
+            center_x + 4,
+            time_y,
+            text=self.current_text,
+            fill=COLORS["soft"],
+            font=("Segoe UI", 8, "bold"),
+            anchor="w",
+        )
+
+        if self.detail_text:
+            self.canvas.create_text(
+                center_x,
+                height - 3,
+                text=self.detail_text,
+                fill=self.accent,
+                font=("Segoe UI", 6, "bold"),
+                anchor="s",
+            )
+
+
 def color_for_remaining(remaining: float | None) -> str:
     if remaining is None:
         return COLORS["muted"]

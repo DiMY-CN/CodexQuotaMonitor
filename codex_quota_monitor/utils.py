@@ -86,14 +86,6 @@ def compact_number(value: int | None) -> str:
     return str(value)
 
 
-def compact_token_pair(used: int | None, limit: int | None) -> str:
-    if used is None or limit is None:
-        return "--"
-    if abs(used) >= 1_000 and abs(limit) >= 1_000:
-        return f"{used // 1_000}/{limit // 1_000}"
-    return f"{used}/{limit}"
-
-
 def truncate_text(text: str, max_chars: int) -> str:
     clean = " ".join(str(text).split())
     if len(clean) <= max_chars:
