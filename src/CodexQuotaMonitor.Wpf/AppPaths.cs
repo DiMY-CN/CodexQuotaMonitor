@@ -28,14 +28,17 @@ public sealed class AppPaths
         while (current is not null)
         {
             if (File.Exists(Path.Combine(current.FullName, "Start-CodexQuotaMonitorNative.cmd")) ||
-                File.Exists(Path.Combine(current.FullName, "settings.json")))
+                File.Exists(Path.Combine(current.FullName, "settings.example.json")))
             {
                 return new AppPaths(current.FullName);
             }
             current = current.Parent;
         }
 
-        return new AppPaths(baseDir);
+        var localState = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CodexQuotaMonitor");
+        return new AppPaths(localState);
     }
 
     public string ResolveCodexHome(string? overridePath)

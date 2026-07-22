@@ -32,7 +32,9 @@ public sealed class AppSettings
     public void Normalize()
     {
         QuotaInterval = Math.Max(30, QuotaInterval);
-        WindowWidth = Math.Clamp(WindowWidth, 210, 520);
+        WindowWidth = WindowWidth is < 220 or > 300
+            ? Constants.DefaultWidth
+            : WindowWidth;
         RedThreshold = Math.Clamp(RedThreshold, 0.0, 100.0);
         AmberThreshold = Math.Clamp(AmberThreshold, RedThreshold, 100.0);
     }

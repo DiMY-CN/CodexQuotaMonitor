@@ -4,9 +4,10 @@ using CodexQuotaMonitor.Wpf;
 var tests = new (string Name, Action Body)[]
 {
     ("quota JSON-RPC response parsing", TestQuotaParsing),
+    ("weekly-only quota is not mislabeled as 5H", TestWeeklyOnlyQuotaParsing),
     ("settings defaults, JSON load, CLI override, corrupt fallback", TestSettings),
     ("formatting helpers", TestFormatting),
-    ("taskbar placement", TestTaskbarPlacement),
+    ("taskbar overlay placement", TestTaskbarPlacement),
     ("argument handling", TestArguments)
 };
 
@@ -54,8 +55,30 @@ static void TestQuotaParsing()
     var snapshot = QuotaReader.ParseRateLimitResult(document.RootElement);
     Equal(null, snapshot.Error, "quota error");
     Equal("test-limit", snapshot.LimitId, "limit id");
-    Near(42.75, snapshot.Primary!.RemainingPercent!.Value, 0.001, "primary remaining");
-    Near(79.0, snapshot.Secondary!.RemainingPercent!.Value, 0.001, "secondary remaining");
+    Near(42.75, snapshot.FiveHour!.RemainingPercent!.Value, 0.001, "5h remaining");
+    Near(79.0, snapshot.Weekly!.RemainingPercent!.Value, 0.001, "weekly remaining");
+}
+
+static void TestWeeklyOnlyQuotaParsing()
+{
+    using var document = JsonDocument.Parse("""
+        {
+          "rateLimits": {
+            "limitId": "codex",
+            "primary": {
+              "usedPercent": 25,
+              "windowDurationMins": 10080,
+              "resetsAt": 4102448400
+            },
+            "secondary": null
+          }
+        }
+        """);
+
+    var snapshot = QuotaReader.ParseRateLimitResult(document.RootElement);
+    Equal<LimitWindow?>(null, snapshot.FiveHour, "disabled 5h window");
+    Near(75.0, snapshot.Weekly!.RemainingPercent!.Value, 0.001, "weekly-only remaining");
+    Equal(10080, snapshot.Weekly.WindowMins, "weekly-only duration");
 }
 
 static void TestSettings()
@@ -72,7 +95,7 @@ static void TestSettings()
             {
               "quota_interval": 60,
               "no_tray": true,
-              "window_width": 320,
+              "window_width": 336,
               "red_threshold": 10,
               "amber_threshold": 25
             }
@@ -80,6 +103,7 @@ static void TestSettings()
         var loaded = SettingsStore.Load(path);
         Equal(60, loaded.QuotaInterval, "loaded quota interval");
         Equal(true, loaded.NoTray, "loaded no tray");
+        Equal(260, loaded.WindowWidth, "floating-card width migration");
 
         var cli = CliOptions.Parse(["--quota-interval", "300", "--tray"]);
         var merged = SettingsStore.ApplyCliOverrides(loaded, cli);
@@ -106,18 +130,17 @@ static void TestFormatting()
 
 static void TestTaskbarPlacement()
 {
-    var rect = new NativeMethods.RECT
-    {
-        Left = 0,
-        Top = 1032,
-        Right = 1920,
-        Bottom = 1080
-    };
-    var placement = TaskbarPlacementCalculator.Compute(3, rect, 260, 48, 1920, 1080);
-    Equal(0, placement.X, "bottom x");
-    Equal(1032, placement.Y, "bottom y");
-    Equal(260, placement.Width, "bottom width");
-    Equal(48, placement.Height, "bottom height");
+    var bottomRect = new NativeMethods.RECT { Left = 0, Top = 1032, Right = 1920, Bottom = 1080 };
+    var bottom = TaskbarPlacementCalculator.Compute(3, bottomRect, 260, 48, 1920, 1080);
+    Equal(new TaskbarPlacement(0, 1032, 260, 48), bottom, "bottom taskbar placement");
+
+    var topRect = new NativeMethods.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 40 };
+    var top = TaskbarPlacementCalculator.Compute(1, topRect, 260, 48, 1920, 1080);
+    Equal(new TaskbarPlacement(0, 0, 260, 40), top, "top taskbar height");
+
+    var verticalRect = new NativeMethods.RECT { Left = 0, Top = 0, Right = 48, Bottom = 1080 };
+    var vertical = TaskbarPlacementCalculator.Compute(0, verticalRect, 260, 48, 1920, 1080);
+    Equal(new TaskbarPlacement(0, 1032, 260, 48), vertical, "vertical taskbar fallback");
 }
 
 static void TestArguments()

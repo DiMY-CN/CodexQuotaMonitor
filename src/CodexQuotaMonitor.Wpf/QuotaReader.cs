@@ -47,12 +47,16 @@ public sealed class QuotaReader
             return new QuotaSnapshot(Error: "missing rateLimits", UpdatedAt: DateTimeOffset.Now);
         }
 
+        var primary = ParseWindow(GetProperty(rateLimits, "primary"));
+        var secondary = ParseWindow(GetProperty(rateLimits, "secondary"));
+        var (fiveHour, weekly) = ClassifyWindows(primary, secondary);
+
         return new QuotaSnapshot(
             LimitId: GetString(rateLimits, "limitId"),
             LimitName: GetString(rateLimits, "limitName"),
             PlanType: GetString(rateLimits, "planType"),
-            Primary: ParseWindow("5h", GetProperty(rateLimits, "primary")),
-            Secondary: ParseWindow("Week", GetProperty(rateLimits, "secondary")),
+            FiveHour: fiveHour,
+            Weekly: weekly,
             RateLimitReachedType: GetString(rateLimits, "rateLimitReachedType"),
             UpdatedAt: DateTimeOffset.Now);
     }
@@ -195,17 +199,44 @@ public sealed class QuotaReader
         }
     }
 
-    private static LimitWindow ParseWindow(string label, JsonElement? element)
+    private static (LimitWindow? FiveHour, LimitWindow? Weekly) ClassifyWindows(
+        LimitWindow? primary,
+        LimitWindow? secondary)
+    {
+        var windows = new[] { primary, secondary }.Where(window => window is not null).Cast<LimitWindow>().ToArray();
+        var fiveHour = windows.FirstOrDefault(window => IsDuration(window.WindowMins, 300, 5));
+        var weekly = windows.FirstOrDefault(window => IsDuration(window.WindowMins, 10_080, 60));
+
+        // Older app-server builds did not always return windowDurationMins.
+        // Positional fallback is used only when both windows exist and neither can be classified.
+        if (fiveHour is null && weekly is null && primary is not null && secondary is not null &&
+            primary.WindowMins is null && secondary.WindowMins is null)
+        {
+            fiveHour = primary;
+            weekly = secondary;
+        }
+
+        return (
+            fiveHour is null ? null : fiveHour with { Label = "5h" },
+            weekly is null ? null : weekly with { Label = "Week" });
+    }
+
+    private static bool IsDuration(int? actual, int expected, int tolerance)
+    {
+        return actual.HasValue && Math.Abs(actual.Value - expected) <= tolerance;
+    }
+
+    private static LimitWindow? ParseWindow(JsonElement? element)
     {
         if (!element.HasValue || element.Value.ValueKind != JsonValueKind.Object)
         {
-            return new LimitWindow(label);
+            return null;
         }
 
         var used = GetDouble(element.Value, "usedPercent");
         double? remaining = used.HasValue ? Math.Clamp(100.0 - used.Value, 0.0, 100.0) : null;
         return new LimitWindow(
-            label,
+            "unclassified",
             used,
             remaining,
             GetInt(element.Value, "windowDurationMins"),

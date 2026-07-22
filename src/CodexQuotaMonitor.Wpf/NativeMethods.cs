@@ -24,6 +24,12 @@ public static class NativeMethods
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int WS_EX_APPWINDOW = 0x00040000;
     public const int WS_EX_NOACTIVATE = 0x08000000;
+    private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    private const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
+    private const int DWMWCP_ROUND = 2;
+    private const int DWMSBT_TRANSIENTWINDOW = 3;
+    private const int WCA_ACCENT_POLICY = 19;
+    private const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
 
     public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
 
@@ -50,11 +56,31 @@ public static class NativeMethods
         public nint lParam;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ACCENT_POLICY
+    {
+        public int AccentState;
+        public int AccentFlags;
+        public int GradientColor;
+        public int AnimationId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WINDOWCOMPOSITIONATTRIBDATA
+    {
+        public int Attribute;
+        public IntPtr Data;
+        public int SizeOfData;
+    }
+
     [DllImport("shell32.dll", SetLastError = true)]
     public static extern nuint SHAppBarMessage(uint dwMessage, ref APPBARDATA pData);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
@@ -98,6 +124,21 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int virtualKey);
+
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    private static extern int DwmSetWindowAttribute(
+        IntPtr hwnd,
+        int attribute,
+        ref int value,
+        int valueSize);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowCompositionAttribute")]
+    private static extern int SetWindowCompositionAttribute(
+        IntPtr hwnd,
+        ref WINDOWCOMPOSITIONATTRIBDATA data);
+
     public static IntPtr RootWindow(IntPtr hwnd)
     {
         var root = GetAncestor(hwnd, GA_ROOT);
@@ -107,6 +148,15 @@ public static class NativeMethods
     public static nint GetWindowLongPtr(IntPtr hwnd, int index)
     {
         return IntPtr.Size == 8 ? GetWindowLongPtr64(hwnd, index) : GetWindowLong32(hwnd, index);
+    }
+
+    public static bool TryGetTaskbarRect(out uint edge, out RECT rect)
+    {
+        var data = new APPBARDATA { cbSize = Marshal.SizeOf<APPBARDATA>() };
+        var result = SHAppBarMessage(ABM_GETTASKBARPOS, ref data);
+        edge = data.uEdge;
+        rect = data.rc;
+        return result != 0 && rect.Width > 0 && rect.Height > 0;
     }
 
     public static void SetWindowLongPtr(IntPtr hwnd, int index, nint value)
@@ -119,16 +169,6 @@ public static class NativeMethods
         {
             SetWindowLong32(hwnd, index, unchecked((int)value));
         }
-    }
-
-    public static bool TryGetTaskbarRect(out uint edge, out RECT rect)
-    {
-        var data = new APPBARDATA();
-        data.cbSize = Marshal.SizeOf<APPBARDATA>();
-        var result = SHAppBarMessage(ABM_GETTASKBARPOS, ref data);
-        edge = data.uEdge;
-        rect = data.rc;
-        return result != 0;
     }
 
     public static void ApplyOverlayStyles(IntPtr hwnd)
@@ -153,6 +193,65 @@ public static class NativeMethods
     {
         hwnd = RootWindow(hwnd);
         SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
+    }
+
+    public static bool EnableFrostedBackdrop(IntPtr hwnd)
+    {
+        hwnd = RootWindow(hwnd);
+        try
+        {
+            var corner = DWMWCP_ROUND;
+            _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                ref corner,
+                Marshal.SizeOf<int>());
+
+            if (Environment.OSVersion.Version.Build >= 22000)
+            {
+                var backdrop = DWMSBT_TRANSIENTWINDOW;
+                if (DwmSetWindowAttribute(
+                        hwnd,
+                        DWMWA_SYSTEMBACKDROP_TYPE,
+                        ref backdrop,
+                        Marshal.SizeOf<int>()) == 0)
+                {
+                    return true;
+                }
+            }
+
+            var accent = new ACCENT_POLICY
+            {
+                AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND,
+                AccentFlags = 2,
+                GradientColor = unchecked((int)0xCC282420)
+            };
+            var size = Marshal.SizeOf<ACCENT_POLICY>();
+            var pointer = Marshal.AllocHGlobal(size);
+            try
+            {
+                Marshal.StructureToPtr(accent, pointer, false);
+                var data = new WINDOWCOMPOSITIONATTRIBDATA
+                {
+                    Attribute = WCA_ACCENT_POLICY,
+                    Data = pointer,
+                    SizeOfData = size
+                };
+                return SetWindowCompositionAttribute(hwnd, ref data) != 0;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(pointer);
+            }
+        }
+        catch (DllNotFoundException)
+        {
+            return false;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            return false;
+        }
     }
 
     public static List<IntPtr> FindWindowsByTitlePrefix(string prefix)

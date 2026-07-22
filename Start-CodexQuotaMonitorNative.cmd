@@ -3,7 +3,8 @@ setlocal
 
 set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
-set "EXE=%ROOT%\publish\win-x64\CodexQuotaMonitor.Wpf.exe"
+set "EXE=%ROOT%\publish\win-x64-self-contained\CodexQuotaMonitor.Wpf.exe"
+set "LEGACY_EXE=%ROOT%\publish\win-x64\CodexQuotaMonitor.Wpf.exe"
 set "DLL=%ROOT%\publish\win-x64\CodexQuotaMonitor.Wpf.dll"
 set "PROJECT=%ROOT%\src\CodexQuotaMonitor.Wpf\CodexQuotaMonitor.Wpf.csproj"
 set "FALLBACK_DLL=%ROOT%\src\CodexQuotaMonitor.Wpf\bin\Release\net8.0-windows\CodexQuotaMonitor.Wpf.dll"
@@ -17,14 +18,23 @@ for %%A in (%*) do (
 
 if exist "%EXE%" (
     if "%CONSOLE_MODE%"=="1" (
-        if exist "%DLL%" (
-            dotnet "%DLL%" %*
-        ) else (
-            "%EXE%" %*
-        )
+        "%EXE%" %*
         exit /b %ERRORLEVEL%
     )
     start "" "%EXE%" %*
+    exit /b 0
+)
+
+if exist "%LEGACY_EXE%" (
+    if "%CONSOLE_MODE%"=="1" (
+        if exist "%DLL%" (
+            dotnet "%DLL%" %*
+        ) else (
+            "%LEGACY_EXE%" %*
+        )
+        exit /b %ERRORLEVEL%
+    )
+    start "" "%LEGACY_EXE%" %*
     exit /b 0
 )
 

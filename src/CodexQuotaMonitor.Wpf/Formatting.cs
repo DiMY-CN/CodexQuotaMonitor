@@ -52,17 +52,17 @@ public static class Formatting
     {
         if (!remaining.HasValue)
         {
-            return ColorFromHex("#91A0B5");
+            return ColorFromHex("#7F8B98");
         }
         if (remaining.Value < settings.RedThreshold)
         {
-            return ColorFromHex("#FF6678");
+            return ColorFromHex("#FF6B81");
         }
         if (remaining.Value < settings.AmberThreshold)
         {
-            return ColorFromHex("#F2BD4D");
+            return ColorFromHex("#FFC857");
         }
-        return ColorFromHex("#28D989");
+        return ColorFromHex("#2DD4A8");
     }
 
     public static System.Windows.Media.Color ColorFromHex(string hex)

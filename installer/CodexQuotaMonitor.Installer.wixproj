@@ -1,0 +1,18 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <OutputName>CodexQuotaMonitor-Setup-$(ProductVersion)</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.1.1</ProductVersion>
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\publish\win-x64-self-contained\</PublishDir>
+    <DefineConstants>ProductVersion=$(ProductVersion)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <BindPath Include="$(PublishDir)" BindName="Publish" />
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.2" />
+  </ItemGroup>
+
+</Project>

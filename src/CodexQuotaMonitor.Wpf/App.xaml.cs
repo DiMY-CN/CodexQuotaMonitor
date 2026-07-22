@@ -116,22 +116,15 @@ public partial class App : System.Windows.Application
         Console.WriteLine($"codex_exe={(string.IsNullOrWhiteSpace(codexExe) ? "not found" : codexExe)}");
         Console.WriteLine($"quota_interval={settings.QuotaInterval}");
         Console.WriteLine($"tray={(!settings.NoTray)}");
-
+        var placement = CodexQuotaMonitor.Wpf.MainWindow.ResolveTaskbarPlacement(settings.WindowWidth);
+        Console.WriteLine($"placement={placement.X},{placement.Y},{placement.Width}x{placement.Height}");
         if (NativeMethods.TryGetTaskbarRect(out var edge, out var rect))
         {
-            var placement = TaskbarPlacementCalculator.Compute(
-                edge,
-                rect,
-                settings.WindowWidth,
-                Constants.DefaultHeight,
-                (int)SystemParameters.PrimaryScreenWidth,
-                (int)SystemParameters.PrimaryScreenHeight);
             Console.WriteLine($"taskbar=edge:{edge} rect:{rect.Left},{rect.Top},{rect.Right},{rect.Bottom}");
-            Console.WriteLine($"placement={placement.X},{placement.Y},{placement.Width}x{placement.Height}");
         }
         else
         {
-            Console.WriteLine("taskbar=unavailable");
+            Console.WriteLine("taskbar=unavailable; using lower-left fallback");
         }
     }
 
@@ -149,8 +142,8 @@ public partial class App : System.Windows.Application
                 quota.LimitId,
                 quota.LimitName,
                 quota.PlanType,
-                primary = quota.Primary,
-                secondary = quota.Secondary,
+                fiveHour = quota.FiveHour,
+                weekly = quota.Weekly,
                 quota.RateLimitReachedType
             }
         };
@@ -164,7 +157,8 @@ public partial class App : System.Windows.Application
         {
             NativeMethods.ShowWindow(hwnd, NativeMethods.SW_SHOWNOACTIVATE);
             NativeMethods.ApplyOverlayStyles(hwnd);
-            var placement = ExistingWindowPlacement(settings);
+            NativeMethods.EnableFrostedBackdrop(hwnd);
+            var placement = CodexQuotaMonitor.Wpf.MainWindow.ResolveTaskbarPlacement(settings.WindowWidth);
             NativeMethods.SetTopmostPosition(hwnd, placement.X, placement.Y, placement.Width, placement.Height);
             NativeMethods.SetTopmostNoActivate(hwnd);
             return true;
@@ -172,22 +166,4 @@ public partial class App : System.Windows.Application
         return false;
     }
 
-    private static TaskbarPlacement ExistingWindowPlacement(AppSettings settings)
-    {
-        var width = settings.WindowWidth <= 0 ? Constants.DefaultWidth : settings.WindowWidth;
-        var screenWidth = (int)SystemParameters.PrimaryScreenWidth;
-        var screenHeight = (int)SystemParameters.PrimaryScreenHeight;
-        if (NativeMethods.TryGetTaskbarRect(out var edge, out var rect))
-        {
-            return TaskbarPlacementCalculator.Compute(
-                edge,
-                rect,
-                width,
-                Constants.DefaultHeight,
-                screenWidth,
-                screenHeight);
-        }
-
-        return TaskbarPlacementCalculator.Fallback(width, Constants.DefaultHeight, screenWidth, screenHeight);
-    }
 }

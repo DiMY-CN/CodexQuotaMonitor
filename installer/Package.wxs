@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Id="DiMY_CN.CodexQuotaMonitor.Native"
+           UpgradeCode="F5D76B33-171C-4C7C-9B73-4C0F4D9D4A95"
+           Name="Codex Quota Monitor"
+           Manufacturer="DiMY-CN"
+           Version="$(var.ProductVersion)"
+           Language="2052"
+           Scope="perMachine"
+           InstallerVersion="500">
+    <SummaryInformation Description="Compact taskbar quota overlay for Windows desktop Codex." />
+    <MediaTemplate EmbedCab="yes" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Codex Quota Monitor is already installed." />
+
+    <Icon Id="AppIcon.ico"
+          SourceFile="..\src\CodexQuotaMonitor.Wpf\Assets\CodexQuotaMonitor.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="CREATE_DESKTOP_SHORTCUT" Value="1" Secure="yes" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Codex Quota Monitor" />
+    <Property Id="WixUnelevatedShellExecTarget" Value="[#MainExecutable]" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Codex Quota Monitor">
+        <Component Id="MainApplication" Guid="8D5A04AB-6DE7-4ED0-9976-F05AF4DA4D57">
+          <File Id="MainExecutable"
+                Source="!(bindpath.Publish)\CodexQuotaMonitor.Wpf.exe"
+                KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcutComponent"
+                 Guid="7BCFE8F2-0039-4788-A36B-B5226EE96E3E"
+                 Condition="CREATE_DESKTOP_SHORTCUT">
+        <Shortcut Id="DesktopShortcut"
+                  Name="Codex Quota Monitor"
+                  Description="Windows desktop Codex usage monitor"
+                  Target="[INSTALLFOLDER]CodexQuotaMonitor.Wpf.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\DiMY-CN\CodexQuotaMonitor"
+                       Name="DesktopShortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="Codex Quota Monitor">
+      <ComponentRef Id="MainApplication" />
+      <ComponentRef Id="DesktopShortcutComponent" />
+    </Feature>
+
+    <ui:WixUI Id="CodexUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+    <CustomAction Id="LaunchApplication"
+                  BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+                  DllEntry="WixUnelevatedShellExec"
+                  Execute="immediate"
+                  Return="ignore" />
+  </Package>
+</Wix>
